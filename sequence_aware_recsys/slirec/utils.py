@@ -1,6 +1,7 @@
 import logging 
 import pandas as pd
 import _pickle as cPickle
+import random
 
 logger = logging.getLogger()
 
@@ -68,3 +69,63 @@ def create_vocab(train_file, user_vocab, item_vocab, cate_vocab):
     cPickle.dump(uid_voc, open(user_vocab, "wb"))
     cPickle.dump(mid_voc, open(item_vocab, "wb"))
     cPickle.dump(cat_voc, open(cate_vocab, "wb"))
+    
+def create_item2cate(instance_file):
+    logger.info("creating item2cate dict")
+    global item2cate
+    instance_df = pd.read_csv(
+        instance_file,
+        sep="\t",
+        names=["label", "user_id", "item_id", "timestamp", "cate_id"],
+    )
+    item2cate = instance_df.set_index("item_id")["cate_id"].to_dict() 
+    
+def get_sampled_data(instance_file, sample_rate):
+    logger.info("getting sampled data...")
+    global item2cate
+    output_file = str(instance_file) + "_" + str(sample_rate)
+    columns = ["label", "user_id", "item_id", "timestamp", "cate_id"]
+    ns_df = pd.read_csv(instance_file, sep="\t", names=columns)
+    items_num = ns_df["item_id"].nunique()
+    items_with_popular = list(ns_df["item_id"])
+    items_sample, count = set(), 0
+    while count < int(items_num * sample_rate):
+        random_item = random.choice(items_with_popular)
+        if random_item not in items_sample:
+            items_sample.add(random_item)
+            count += 1
+    ns_df_sample = ns_df[ns_df["item_id"].isin(items_sample)]
+    ns_df_sample.to_csv(output_file, sep="\t", index=None, header=None)
+    return output_file\
+
+def negative_sampling_offline(
+    instance_input_file, valid_file, test_file, valid_neg_nums=4, test_neg_nums=49
+):
+
+    columns = ["label", "user_id", "item_id", "timestamp", "cate_id"]
+    ns_df = pd.read_csv(instance_input_file, sep="\t", names=columns)
+    items_with_popular = list(ns_df["item_id"])
+
+    global item2cate
+
+    # valid negative sampling
+    logger.info("start valid negative sampling")
+    with open(valid_file, "r") as f:
+        valid_lines = f.readlines()
+    write_valid = open(valid_file, "w")
+    for line in valid_lines:
+        write_valid.write(line)
+        words = line.strip().split("\t")
+        positive_item = words[2]
+        count = 0
+        neg_items = set()
+        while count < valid_neg_nums:
+            neg_item = random.choice(items_with_popular)
+            if neg_item == positive_item or neg_item in neg_items:
+                continue
+            count += 1
+            neg_items.add(neg_item)
+            words[0] = "0"
+            words[2] = str(neg_item)
+            words[3] = str(item2cate[neg_item])
+            write_valid.write("\t".join(words) + "\n")
